@@ -1,0 +1,40 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment variables (never commit this - contains API keys)
+.env
+.env.*
+
+# uv
+.uv/
+
+# Playwright browsers
+ms-playwright/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads (user resume files shouldn't be in git)
+uploads/
+
+# Scratch file
+scratch.py

@@ -1,0 +1,34 @@
+John Doe
+Software Engineer
+Email: johndoe@gmail.com
+Phone: +91 9876543210
+
+SKILLS
+Python, FastAPI, Django, React, JavaScript, SQL, PostgreSQL, MongoDB, Docker, Git, REST APIs
+
+WORK EXPERIENCE
+Software Engineer - ABC Tech Solutions (2022 - 2024)
+- Built REST APIs using FastAPI and Python
+- Managed PostgreSQL databases
+- Deployed applications using Docker
+
+Junior Developer - XYZ Startup (2021 - 2022)
+- Developed frontend components using React
+- Worked with REST APIs
+
+PROJECTS
+Resume Job Matcher
+- An AI powered app that matches resumes with job postings
+- Tech stack: Python, FastAPI, OpenAI, Streamlit
+
+E-Commerce Website
+- A full stack e-commerce platform with payment integration
+- Tech stack: React, Node.js, MongoDB, Stripe
+
+EDUCATION
+B.Tech in Computer Science
+ABC University, 2021
+
+CERTIFICATIONS
+AWS Certified Developer
+Google Data Analytics Certificate

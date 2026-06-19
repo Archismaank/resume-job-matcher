@@ -1,0 +1,36 @@
+Python Developer - Google India
+
+Company: Google
+Location: Bangalore, India
+Experience: 2-4 years
+
+About the Role:
+We are looking for a talented Python Developer to join our engineering team.
+You will be responsible for building and maintaining scalable backend services.
+
+Required Skills:
+- Python
+- FastAPI or Django
+- PostgreSQL or MySQL
+- REST APIs
+- Git
+- Docker
+
+Preferred Skills:
+- Kubernetes
+- Redis
+- AWS or GCP
+- Experience with microservices
+
+Responsibilities:
+- Design and develop high quality backend APIs
+- Write clean maintainable code
+- Collaborate with frontend teams
+- Participate in code reviews
+
+Education:
+B.Tech or B.E in Computer Science or related field
+
+About Google:
+Google is a multinational technology company specializing in internet related
+services and products.
