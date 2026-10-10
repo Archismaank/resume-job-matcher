@@ -51,6 +51,14 @@ def extract_text_from_docx(file_path: str) -> str:
         if paragraph.text.strip():
             full_text += paragraph.text + "\n"
 
+    # Bug 5 fix: many resume templates use tables for skills/experience layout
+    # — paragraphs alone misses all of that content
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if cell.text.strip():
+                    full_text += cell.text + "\n"
+
     full_text = full_text.strip()
     return full_text
 

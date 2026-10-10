@@ -1,6 +1,9 @@
 import asyncio
 import uuid
+import logging
 import traceback
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 from app.api.file_handler import save_upload_file, delete_file
@@ -31,12 +34,30 @@ async def analyze_with_url(
     Scrapes the job URL, analyze the resume against it, and returns the full analysis.
     """
 
+    # Bug 8 fix: validate URL before doing any work
+    if not job_url.startswith("http"):
+        raise HTTPException(
+            status_code=422,
+            detail="Please provide a valid job URL starting with http:// or https://"
+        )
+
     # save the uploaded file
     file_path = await save_upload_file(file)
 
     try:
         print("[analyze/url] Step 1: extracting resume text...")
         raw_resume_text = extract_text(str(file_path))
+
+        # Bug 2 fix: guard against scanned/image-only PDFs that yield no text
+        if not raw_resume_text.strip():
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Could not extract any text from the resume. "
+                    "It may be a scanned image PDF. "
+                    "Please use a text-based PDF or DOCX file."
+                ),
+            )
 
         print("[analyze/url] Step 2: parsing resume with AI...")
         resume_data = extract_resume_data(raw_resume_text)
@@ -73,17 +94,22 @@ async def analyze_with_url(
             match_color = get_match_color(analysis.match_percentage),
         )
 
-        # Save to history
-        history_record = AnalysisHistory(
-            user_id=current_user.id,
-            job_title=job_data.title,
-            company=job_data.company,
-            job_url=job_url,
-            match_percentage=analysis.match_percentage,
-            full_result_json=response.model_dump_json(),
-        )
-        db.add(history_record)
-        db.commit()
+        # Bug 4 fix: wrap DB save in its own try/except so a history failure
+        # never crashes the main response — just log and continue
+        try:
+            history_record = AnalysisHistory(
+                user_id=current_user.id,
+                job_title=job_data.title,
+                company=job_data.company,
+                job_url=job_url,
+                match_percentage=analysis.match_percentage,
+                full_result_json=response.model_dump_json(),
+            )
+            db.add(history_record)
+            db.commit()
+        except Exception as db_err:
+            db.rollback()
+            logger.warning(f"[analyze/url] Failed to save history (non-fatal): {db_err}")
 
         return response
     except HTTPException:
@@ -91,8 +117,8 @@ async def analyze_with_url(
     except Exception as e:
         print(f"[analyze/url] ERROR: {e}")
         raise HTTPException(
-            status_code = 500,
-            detail = str(e)
+            status_code=500,
+            detail=str(e)
         )
     finally:
         # we will always delete the uploaded file after processing -> finally always runs even if try or except fails
@@ -114,37 +140,64 @@ async def analyze_with_text(
 
     try:
         raw_resume_text = extract_text(str(file_path))
+
+        # Bug 2 fix: guard against scanned/image-only PDFs that yield no text
+        if not raw_resume_text.strip():
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Could not extract any text from the resume. "
+                    "It may be a scanned image PDF. "
+                    "Please use a text-based PDF or DOCX file."
+                ),
+            )
+
         resume_data = extract_resume_data(raw_resume_text)
+
+        # Bug 3 fix: guard against empty job description
         raw_job_text = scrape_job_posting_fallback(job_text)
+        if not raw_job_text.strip():
+            raise HTTPException(
+                status_code=422,
+                detail="Job description cannot be empty. Please paste the job description text."
+            )
+
         job_data = extract_job_data(raw_job_text)
         analysis = analyze_resume_against_job(resume_data, job_data)
 
         response = AnalyzeResponse(
-            success = True,
-            analysis_id = str(uuid.uuid4()),
-            resume = resume_data,
-            job = job_data,
-            analysis = analysis,
-            match_label = get_match_label(analysis.match_percentage),
-            match_color = get_match_color(analysis.match_percentage),
+            success=True,
+            analysis_id=str(uuid.uuid4()),
+            resume=resume_data,
+            job=job_data,
+            analysis=analysis,
+            match_label=get_match_label(analysis.match_percentage),
+            match_color=get_match_color(analysis.match_percentage),
         )
 
-        history_record = AnalysisHistory(
-            user_id=current_user.id,
-            job_title=job_data.title,
-            company=job_data.company,
-            job_url=None,
-            match_percentage=analysis.match_percentage,
-            full_result_json=response.model_dump_json(),
-        )
-        db.add(history_record)
-        db.commit()
+        # Bug 4 fix: wrap DB save with rollback so a history failure never crashes the response
+        try:
+            history_record = AnalysisHistory(
+                user_id=current_user.id,
+                job_title=job_data.title,
+                company=job_data.company,
+                job_url=None,
+                match_percentage=analysis.match_percentage,
+                full_result_json=response.model_dump_json(),
+            )
+            db.add(history_record)
+            db.commit()
+        except Exception as db_err:
+            db.rollback()
+            logger.warning(f"[analyze/text] Failed to save history (non-fatal): {db_err}")
 
         return response
+    except HTTPException:
+        raise  # Bug 1 fix: pass-through 422 and other intentional HTTP errors
     except Exception as e:
         raise HTTPException(
-            status_code = 500,
-            detail = str(e)
+            status_code=500,
+            detail=str(e)
         )
     finally:
         delete_file(file_path)
@@ -178,39 +231,48 @@ async def get_recommendation(
             remote_only = remote_only,
         )
 
-        recommendations, search_query = await generate_recommendations(
-            resume = resume_data,
-            preferences = preferences,
-            top_n = 10,
+        # generate_recommendations now returns a 3-tuple: (recommendations, search_query, raw_job_count)
+        recommendations, search_query, raw_jobs_count = await generate_recommendations(
+            resume=resume_data,
+            preferences=preferences,
+            top_n=10,
         )
 
+        # Bug 7 fix: use correct counts — raw fetched, analyzed (pre-ranked top 15), and returned (top 10)
         response = RecommendResponse(
-            success = True,
-            resume = resume_data,
-            total_jobs_found = len(recommendations),
-            total_jobs_analyzed = len(recommendations),
-            recommendation = recommendations,
-            search_query = search_query,
-            preferences = preferences,
+            success=True,
+            resume=resume_data,
+            total_jobs_found=raw_jobs_count,
+            total_jobs_analyzed=len(recommendations),
+            recommendation=recommendations,
+            search_query=search_query,
+            preferences=preferences,
         )
 
-        history_record = RecommendationHistory(
-            user_id=current_user.id,
-            search_query=search_query,
-            total_jobs_found=len(recommendations),
-            full_result_json=response.model_dump_json(),
-        )
-        db.add(history_record)
-        db.commit()
+        # Bug 4 fix: wrap DB save with rollback
+        try:
+            history_record = RecommendationHistory(
+                user_id=current_user.id,
+                search_query=search_query,
+                total_jobs_found=raw_jobs_count,
+                full_result_json=response.model_dump_json(),
+            )
+            db.add(history_record)
+            db.commit()
+        except Exception as db_err:
+            db.rollback()
+            logger.warning(f"[recommend] Failed to save history (non-fatal): {db_err}")
 
         return response
-    
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
-            status_code = 500,
-            detail = str(e)
+            status_code=500,
+            detail=str(e)
         )
-    
+
     finally:
         delete_file(file_path)
 

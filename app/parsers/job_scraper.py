@@ -93,14 +93,16 @@ def scrape_job_posting(url: str) -> str:
         )
         page = context.new_page()
 
-        # Load the page — domcontentloaded is faster and sufficient for most portals.
-        # Then wait an extra 3s to let JS-rendered content (React/Vue SPAs) populate.
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_timeout(3000)
-
-        html = page.content()
-        context.close()
-        browser.close()
+        # Bug 6 fix: always close browser even if goto/content raises (e.g. timeout)
+        try:
+            # Load the page — domcontentloaded is faster and sufficient for most portals.
+            # Then wait an extra 3s to let JS-rendered content (React/Vue SPAs) populate.
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            page.wait_for_timeout(3000)
+            html = page.content()
+        finally:
+            context.close()
+            browser.close()
 
     soup = BeautifulSoup(html, "html.parser")
     _remove_noise_elements(soup)

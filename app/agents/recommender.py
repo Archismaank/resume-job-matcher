@@ -214,7 +214,8 @@ async def fetch_all_jobs_multi_query(
             logger.info(f"[fetch] {portal} query[{query_idx}] '{queries[query_idx]}': {len(result)} jobs")
             all_jobs.extend(result)
 
-    # ── Sync portal: Naukri — run all queries in thread pool simultaneously ───
+    # ── Sync portal: Naukri — Bug 9 fix: only run for primary query to avoid
+    # launching multiple Chromium instances simultaneously (each ~150MB RAM)
     loop = asyncio.get_event_loop()
     naukri_futures = [
         loop.run_in_executor(
@@ -226,7 +227,7 @@ async def fetch_all_jobs_multi_query(
                 employment_type=preferences.employment_type,
             )
         )
-        for query in queries
+        for query in queries[:1]  # primary query only
     ]
     naukri_results = await asyncio.gather(*naukri_futures, return_exceptions=True)
 
@@ -415,7 +416,7 @@ async def generate_recommendations(
     resume: ResumeData,
     preferences: SearchPreferences,
     top_n: int = 10,
-) -> tuple[list[JobRecommendation], str]:
+) -> tuple[list[JobRecommendation], str, int]:
     """
     Main recommendation pipeline (fully upgraded with multi-query + RAG).
 
@@ -427,11 +428,8 @@ async def generate_recommendations(
     5. Full GPT + semantic analysis on top 15 only (parallel thread pool)
     6. Sort by final blended score → return top N with ranks
 
-    Cost vs old pipeline:
-    - Query gen:    1 GPT call (same)
-    - Fetching:     3× more jobs but same latency (all parallel)
-    - RAG pre-rank: 1 batch embed call (new, very cheap ~$0.000003)
-    - GPT analysis: ~15 calls (down from ~40, 62% reduction)
+    Returns:
+        (recommendations, primary_query, raw_jobs_count) — 3-tuple
     """
 
     # Step 1 — Generate 3 complementary search queries
@@ -443,14 +441,15 @@ async def generate_recommendations(
 
     # Step 2 — Fetch jobs for ALL queries from ALL portals simultaneously
     all_jobs = await fetch_all_jobs_multi_query(queries, preferences)
-    logger.info(f"[pipeline] Total raw jobs fetched: {len(all_jobs)}")
+    raw_jobs_count = len(all_jobs)  # Bug 7 fix: capture before dedup/filtering
+    logger.info(f"[pipeline] Total raw jobs fetched: {raw_jobs_count}")
 
     # Step 3 — Deduplicate
     unique_jobs = deduplicate_jobs(all_jobs)
     logger.info(f"[pipeline] After dedup: {len(unique_jobs)} unique jobs")
 
     if not unique_jobs:
-        return [], primary_query
+        return [], primary_query, 0
 
     # Step 4 — RAG pre-rank by semantic similarity (one batch embed call)
     pre_ranked = pre_rank_jobs_by_semantic_similarity(resume, unique_jobs, top_n=15)
@@ -467,4 +466,4 @@ async def generate_recommendations(
     for i, rec in enumerate(top_recommendations):
         rec.rank = i + 1
 
-    return top_recommendations, primary_query
+    return top_recommendations, primary_query, raw_jobs_count
