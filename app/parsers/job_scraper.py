@@ -30,8 +30,12 @@ def _remove_noise_elements(soup: BeautifulSoup) -> None:
     for tag in soup(_NOISE_TAGS):
         tag.decompose()
 
-    # Remove elements whose class or id strongly suggests sidebar / related-jobs noise
+    # Remove elements whose class or id strongly suggests sidebar / related-jobs noise.
+    # Guard: the first loop's decompose() also destroys child elements (attrs → None).
+    # find_all(True) is pre-built and may still contain those children — skip them.
     for element in soup.find_all(True):
+        if getattr(element, "decomposed", False):
+            continue
         classes = " ".join(element.get("class", [])).lower()
         element_id = (element.get("id") or "").lower()
         combined = classes + " " + element_id
@@ -70,20 +74,32 @@ def scrape_job_posting(url: str) -> str:
         raise ValueError(f"Invalid URL: {url}. Must start with http or https.")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-
-        # Realistic user-agent to avoid bot-detection blocks
-        page.set_extra_http_headers({
-            "User-Agent": (
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ],
+        )
+        context = browser.new_context(
+            viewport={"width": 1366, "height": 768},
+            user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            )
-        })
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            locale="en-US",
+        )
+        page = context.new_page()
 
-        page.goto(url, wait_until="networkidle", timeout=30000)
+        # Load the page — domcontentloaded is faster and sufficient for most portals.
+        # Then wait an extra 3s to let JS-rendered content (React/Vue SPAs) populate.
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        page.wait_for_timeout(3000)
+
         html = page.content()
+        context.close()
         browser.close()
 
     soup = BeautifulSoup(html, "html.parser")

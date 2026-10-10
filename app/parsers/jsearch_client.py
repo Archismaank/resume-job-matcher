@@ -81,9 +81,7 @@ async def search_jsearch_jobs(
                     experience_required=_extract_experience(
                         item.get("job_description", "")
                     ),
-                    education_required=item.get(
-                        "job_required_education", {}
-                    ).get("postgraduate_degree", ""),
+                    education_required=(item.get("job_required_education") or {}).get("postgraduate_degree", ""),
                     salary=_format_jsearch_salary(item),
                     source="jsearch",
                     posted_date=item.get("job_posted_at_datetime_utc", ""),

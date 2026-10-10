@@ -36,5 +36,17 @@ Thumbs.db
 # Uploads (user resume files shouldn't be in git)
 uploads/
 
-# Scratch file
+# Scratch / debug files
 scratch.py
+dump.py
+stealth.py
+naukri_scratch.py
+jsearch_client.py
+testcommit.txt
+naukri_debug.html
+
+# SQLite database (contains real user data — never commit)
+*.db
+
+# docs (internal only)
+docs/

@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, field_validator
 from typing import Optional
+from datetime import datetime
 
 
 # ─── Resume Models ────────────────────────────────────────────────────────────
@@ -73,6 +74,7 @@ class SkillGap(BaseModel):
 class AnalysisResult(BaseModel):
     # The final output we show the user
     match_percentage: float
+    semantic_similarity: float = 0.0   # cosine similarity score (0-100) from RAG embeddings
     matched_skills: list[str] = []
     missing_skills: list[SkillGap] = []
     bonus_skills: list[str] = []      # skills you have that aren't required but impressive
@@ -83,7 +85,7 @@ class AnalysisResult(BaseModel):
 # API Request Model -------------------------------------------
 
 class AnalyzeWithURLRequest(BaseModel):
-    # reuqest model for analyzing resume against a job url
+    # request model for analyzing resume against a job url
     job_url : str
 
 class AnalyzeWithTextRequest(BaseModel):
@@ -93,7 +95,7 @@ class AnalyzeWithTextRequest(BaseModel):
 # API Response Model ---------------------------------------
 
 class AnalyzeResponse(BaseModel):
-    # this is the complete response returned to the frontend 
+    # this is the complete response returned to the frontend
     success : bool
     analysis_id : str # unique ID for this analysis
     resume : ResumeData
@@ -127,7 +129,7 @@ class JobListing(BaseModel):
     posted_date : str = ""
 
 class JobRecommendation(BaseModel):
-    # A job listing its match analysis
+    # A job listing with its match analysis
     rank : int
     match_percentage : float
     match_label : str
@@ -144,45 +146,15 @@ class SearchPreferences(BaseModel):
     remote_only : bool = False
 
 class RecommendResponse(BaseModel):
-    # complete response for mode 2 ->  getting job recommendation
+    # complete response for mode 2 -> getting job recommendation
     success : bool
     resume : ResumeData
-    total_jobs_found : int  # total jobs found accross each portal
+    total_jobs_found : int  # total jobs found across each portal
     total_jobs_analyzed : int  # how many jobs we have analyzed
     recommendation : list[JobRecommendation] = []
     search_query : str = ""  # what we searched for
     preferences : Optional[SearchPreferences] = None
     error : Optional[str] = None
-
-
-# Apply model ---------------------------------------------------------
-
-class ApplicationData(BaseModel):
-    full_name : str = ""
-    email : str = ""
-    phone : str = ""
-    total_experience_years : float = 0.0
-    skills_summary : str = ""
-    education_summary : str = ""
-    cover_letter : str = ""
-    linkedin_url : str = ""
-    github_url : str = ""
-    portfolio_url : str = ""
-
-class ApplyRequest(BaseModel):
-    job_url : str
-    resume_data : ResumeData
-    job_data : JobData
-
-class ApplyResponse(BaseModel):
-    # Response after attempting to pre-fill
-    success: bool
-    job_url: str
-    application_data: ApplicationData  # what we pre-filled
-    fields_filled: list[str] = []      # which fields we successfully filled
-    fields_failed: list[str] = []      # which fields we couldn't fill
-    message: str = ""                  # human readable status message
-    error: Optional[str] = None
 
 
 # ─── Auth Schemas ─────────────────────────────────────────────────────────────
@@ -218,6 +190,65 @@ class UserResponse(BaseModel):
     linkedin_url: str = ""
     github_url: str = ""
     portfolio_url: str = ""
+    is_verified: bool = False
 
     class Config:
         from_attributes = True   # allows building from SQLAlchemy ORM objects
+
+class UpdateProfileRequest(BaseModel):
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    github_url: Optional[str] = None
+    portfolio_url: Optional[str] = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+# ─── History Schemas ──────────────────────────────────────────────────────────
+
+class AnalysisHistoryResponse(BaseModel):
+    id: int
+    job_title: str
+    company: str
+    job_url: Optional[str] = None
+    match_percentage: float
+    full_result_json: str
+    created_at: str = ""
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def coerce_datetime_to_str(cls, v):
+        """Pydantic V2 does not auto-coerce datetime → str. We do it explicitly."""
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return str(v) if v is not None else ""
+
+    class Config:
+        from_attributes = True
+
+
+class RecommendationHistoryResponse(BaseModel):
+    id: int
+    search_query: str
+    total_jobs_found: int
+    full_result_json: str
+    created_at: str = ""
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def coerce_datetime_to_str(cls, v):
+        """Pydantic V2 does not auto-coerce datetime → str. We do it explicitly."""
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return str(v) if v is not None else ""
+
+    class Config:
+        from_attributes = True

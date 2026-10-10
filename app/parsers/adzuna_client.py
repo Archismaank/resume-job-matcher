@@ -52,8 +52,8 @@ async def search_adzuna_jobs(
             for item in data.get("results", []):
                 job = JobListing(
                     title=item.get("title", ""),
-                    company=item.get("company", {}).get("display_name", ""),
-                    location=item.get("location", {}).get("display_name", ""),
+                    company=(item.get("company") or {}).get("display_name", ""),
+                    location=(item.get("location") or {}).get("display_name", ""),
                     url=item.get("redirect_url", ""),
                     description=item.get("description", ""),
                     salary=_format_salary(

@@ -122,69 +122,71 @@ Job Description : {job_description}
 """
 
 SEARCH_QUERY_PROMPT = """
-Generate the best job search query for this candidate.
-Return ONLY the search query — no explanation, no quotes, no punctuation.
+You are an expert technical recruiter helping a candidate find the right jobs.
+Analyze the candidate's full profile and generate THREE complementary job search queries.
 
-Rules:
-- 2-4 words maximum
-- ALWAYS include seniority level if experience > 5 years
-- Use the candidate's CURRENT or MOST RECENT job title as the base
-- Do NOT list technologies — use role titles only
-- Think like a recruiter trying to find this exact person's next role
+Each query should target a DIFFERENT ANGLE of the same candidate so that together
+they cast the widest possible net without being irrelevant:
 
-Seniority mapping:
+Query 1 — ROLE TITLE: Based on seniority + most recent job title.
+  Think: "What title would a recruiter search to find this person?"
+  Format: seniority prefix + role title (2-4 words)
+
+Query 2 — TECH STACK: Based on the most marketable technical skills.
+  Think: "What tech keywords define this person's niche?"
+  Format: top 1-2 technologies + role type (2-4 words)
+
+Query 3 — DOMAIN / INDUSTRY: Based on domain expertise + role.
+  Think: "What industry or problem domain does this person specialize in?"
+  Format: domain/industry + role (2-4 words)
+
+Seniority mapping (use for Query 1 and 2):
 - 0-2 years → Junior or no prefix
 - 2-5 years → no prefix or Mid
 - 5-8 years → Senior
 - 8-12 years → Lead or Principal
 - 12+ years → Principal, Staff, or Architect
 
-Candidate profile:
+Return ONLY a valid JSON object with exactly these three keys:
+{{
+  "role_query": "...",
+  "tech_query": "...",
+  "domain_query": "..."
+}}
+
+No explanation. No markdown. No extra text. Just the JSON.
+
+--- CANDIDATE PROFILE ---
 Most recent role: {recent_role}
+All roles (chronological, newest first): {all_roles}
 Total experience: {experience_years} years
-Top skills: {skills}
+Top technical skills: {top_skills}
+Domain/industry keywords: {domain_keywords}
+Key projects: {top_projects}
+Certifications: {certifications}
 
-Examples of GOOD queries:
-- recent_role="Principal Software Engineer", 15 years → "Principal Software Engineer"
-- recent_role="Software Engineer", 3 years, skills=Python,FastAPI → "Python Backend Engineer"
-- recent_role="Data Analyst", 6 years, skills=Python,ML → "Senior Data Scientist"
-- recent_role="Frontend Developer", 2 years, skills=React → "React Frontend Developer"
-- recent_role="DevOps Engineer", 8 years, skills=Kubernetes,Docker → "Senior DevOps Engineer"
-- recent_role="Tech Lead", 10 years, skills=Java,Microservices → "Lead Java Engineer"
+--- EXAMPLES ---
+Candidate: "Software Engineer", 4 years, skills=Python,FastAPI,PostgreSQL, domain=FinTech
+Good output:
+{{
+  "role_query": "Python Backend Engineer",
+  "tech_query": "FastAPI Python Developer",
+  "domain_query": "Backend Engineer FinTech"
+}}
 
-Examples of BAD queries (too generic or technology focused):
-- "Java Developer" ← ignores seniority
-- "Python FastAPI PostgreSQL Developer" ← too specific on tech
-- "Software Engineer" ← too generic
-- "Developer" ← useless
+Candidate: "Data Analyst", 7 years, skills=Python,Pandas,ML,SQL, domain=Healthcare
+Good output:
+{{
+  "role_query": "Senior Data Scientist",
+  "tech_query": "Python Machine Learning Engineer",
+  "domain_query": "Senior Data Analyst Healthcare"
+}}
 
-Return the query only. No quotes. No explanation.
-"""
-
-
-COVER_LETTER_PROMPT = """
-You are an expert career coach and professional writer.
-Write a compelling cover letter for this job application.
-
-Keep it:
-- Professional and concise (3 paragraphs max)
-- Specific to the job and company
-- Highlighting the candidate's most relevant skills
-- Ending with a clear call to action
-
-Candidate:
-Name: {name}
-Skills: {skills}
-Experience: {experience}
-Total Experience: {total_experience_years} years
-Education: {education}
-
-Job:
-Title: {job_title}
-Company: {job_company}
-Required Skills: {required_skills}
-Job Description: {job_description}
-
-Write the cover letter directly without any subject line or date.
-Start with "Dear Hiring Manager," and end with a professional sign-off.
-"""
+Candidate: "DevOps Engineer", 9 years, skills=Kubernetes,Docker,Terraform,AWS, domain=Cloud
+Good output:
+{{
+  "role_query": "Lead DevOps Engineer",
+  "tech_query": "Kubernetes Cloud Engineer",
+  "domain_query": "Senior SRE Cloud Infrastructure"
+}}
+"""

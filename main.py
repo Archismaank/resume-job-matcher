@@ -4,16 +4,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+from alembic.config import Config
+from alembic import command
+
 from app.config import settings
 from app.api.routes import router as analyze_router
 from app.api.auth import router as auth_router
-from app.db.database import create_tables
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create all database tables on startup (safe — only creates if not existing)
-    create_tables()
+    # Run all pending Alembic migrations on startup (safe — only applies new ones)
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
     print(f"Starting Resume Job Matcher...")
     print(f"Environment: {settings.app_env}")
     print(f"AI Provider: {settings.ai_provider}")
@@ -27,7 +30,7 @@ async def lifespan(app: FastAPI):
 # Create the FastAPI app
 app = FastAPI(
     title="Resume Job Matcher API",
-    description="Upload your resume, paste a job URL, get a match score and skill gap analysis.",
+       description="Upload your resume, paste a job URL, get a match score and skill gap analysis.",
     version="0.1.0",
     lifespan=lifespan,
 )

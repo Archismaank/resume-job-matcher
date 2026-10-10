@@ -36,4 +36,6 @@ def create_tables():
     Creates all tables defined via Base subclasses.
     Called once on server startup.
     """
+    from app.db.models import User, AnalysisHistory, RecommendationHistory  # noqa: F401
+
     Base.metadata.create_all(bind=engine)

@@ -17,7 +17,7 @@ from ui.components import (
     render_summary,
     render_job_card,
 )
-from ui.auth.login import render_login_page, logout
+from ui.auth.login import render_login_page, render_landing_page, logout
 
 API_URL = "http://localhost:8000/api/v1"
 
@@ -81,10 +81,46 @@ def main():
             except Exception:
                 st.query_params.clear()
 
+    # ── Handle email verification link (via query param) ────────────────────────
+    verify_token = st.query_params.get("verify_token")
+    if verify_token:
+        try:
+            vresp = requests.get(
+                f"{API_URL}/auth/verify-email",
+                params={"token": verify_token},
+                timeout=10,
+            )
+            st.query_params.clear()
+            if vresp.status_code == 200:
+                st.session_state.email_verified_toast = True
+                st.session_state.pop("is_unverified", None)
+            else:
+                detail = vresp.json().get("detail", "Verification failed.")
+                st.session_state.verify_error = detail
+        except Exception:
+            st.query_params.clear()
+
+    # ── Handle password reset link (via query param) ────────────────────────────
+    reset_token = st.query_params.get("reset_token")
+    if reset_token:
+        st.session_state.show_auth_form = True
+        st.session_state.auth_mode = "reset_password"
+        st.session_state.reset_token = reset_token
+        st.query_params.clear()
+
     # ── Auth gate ────────────────────────────────────────────────────────────
     if not st.session_state.get("access_token"):
-        render_login_page()
+        if st.session_state.get("show_auth_form"):
+            render_login_page()
+        else:
+            render_landing_page()
         return
+
+    # ── Toast after email verification ───────────────────────────────────────
+    if st.session_state.pop("email_verified_toast", False):
+        st.toast("🎉 Email verified! Your account is now fully activated.", icon="✅")
+    if st.session_state.get("verify_error"):
+        st.error(f"🚫 {st.session_state.pop('verify_error')}")
 
     # ── Logged-in session setup ───────────────────────────────────────────────
     if "resume_file" not in st.session_state:
@@ -116,6 +152,19 @@ def main():
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
+    # ── Unverified email banner ──────────────────────────────────────────
+    if st.session_state.get("is_unverified"):
+        bcol1, bcol2 = st.columns([5, 1])
+        with bcol1:
+            st.warning(
+                "📧 **Email not verified.** Check your inbox for a verification link "
+                "to unlock full access.",
+                icon=None,
+            )
+        with bcol2:
+            if st.button("🔄 Resend Email", use_container_width=True, key="resend_verify"):
+                _resend_verification_email()
+
     render_header()
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -124,10 +173,11 @@ def main():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "1️⃣  Analyze",
         "2️⃣  Find Jobs",
-        "3️⃣  Apply",
+        "3️⃣  History",
+        "4️⃣  Profile",
     ])
 
     with tab1:
@@ -137,7 +187,10 @@ def main():
         render_recommend_page()
 
     with tab3:
-        render_apply_page()
+        render_history_page()
+
+    with tab4:
+        render_profile_page()
 
 
 def _page_intro(title: str, subtitle: str):
@@ -203,7 +256,7 @@ def render_analyze_page():
             return
         # Clear only THIS section's previous result before new analysis
         st.session_state.pop("analyze_result", None)
-        # Store the URL (or None) so the Apply/PDF sections can use it
+        # Store the URL (or None) so the PDF report can use it
         st.session_state.analyze_url = job_input if input_type == "Paste a URL" else None
 
         # ── URL result cache: same URL → same result, zero variance ──────────
@@ -310,78 +363,194 @@ def render_recommend_page():
         _render_recommendations(st.session_state.recommend_result)
 
 
-def render_apply_page():
-    _page_intro(
-        "Pre-fill a job application",
-        "We open the application page in your browser and fill in your details automatically. You review and submit."
+
+# ─── History ──────────────────────────────────────────────────────────────────
+
+def render_history_page():
+    """Tab 3: View past analyses and recommendations."""
+    st.markdown("## 📜 Your History")
+
+    history_type = st.radio(
+        "View:",
+        ["Analysis History", "Recommendation History"],
+        horizontal=True,
+        label_visibility="collapsed",
     )
 
-    col1, col2 = st.columns([1, 1], gap="large")
+    if history_type == "Analysis History":
+        _render_analysis_history()
+    else:
+        _render_recommendation_history()
 
-    with col1:
-        _section_label("📄", "Resume Status")
 
-        resume_file = st.session_state.resume_file
+def _render_analysis_history():
+    """Fetch and render analysis history."""
+    headers = {"Authorization": f"Bearer {st.session_state.access_token}"}
 
-        if resume_file:
-            st.success(f"✓ {resume_file.name}")
-        else:
-            st.warning("Upload your resume above.")
+    try:
+        resp = requests.get(
+            f"{API_URL}/history/analyses",
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            st.error("Failed to load analysis history.")
+            return
 
-    with col2:
-        _section_label("🔗", "Job Details")
+        analyses = resp.json()
 
-        # Check if pre-filled from a recommendation
-        prefill = st.session_state.get("prefill_job", {})
-        if prefill:
-            st.markdown("""
-            <div style="background:rgba(201,168,76,0.08); border:1px solid rgba(201,168,76,0.25);
-                        border-radius:10px; padding:10px 14px; margin-bottom:12px;
-                        font-family:'DM Sans',sans-serif; font-size:13px; color:#e2c97e;">
-                ✦ &nbsp; Job details pre-filled from your recommendation.
+        if not analyses:
+            st.markdown(
+                """
+            <div class="empty-state">
+                <div class="empty-state-icon">📊</div>
+                <div class="empty-state-text">No analyses yet</div>
+                <div class="empty-state-hint">Go to the Analyze tab to compare your resume against a job posting</div>
             </div>
-            """, unsafe_allow_html=True)
-
-        job_url = st.text_input(
-            "Application URL",
-            value=prefill.get("url", ""),
-            placeholder="https://naukri.com/job-listings-..."
-        )
-        job_title = st.text_input(
-            "Job title",
-            value=prefill.get("title", ""),
-            placeholder="e.g. Python Developer"
-        )
-        job_company = st.text_input(
-            "Company",
-            value=prefill.get("company", ""),
-            placeholder="e.g. Google"
-        )
-
-        # Clear prefill after reading so it doesn't re-populate on next visit
-        if prefill:
-            st.session_state.pop("prefill_job", None)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    st.info(
-        "A browser window will open with your details pre-filled. "
-        "Review everything carefully before clicking Submit."
-    )
-
-    if st.button("Open & pre-fill application →", use_container_width=True, type="primary"):
-        if not resume_file:
-            st.error("Please upload your resume.")
-            return
-        if not job_url:
-            st.error("Please provide the application URL.")
-            return
-        with st.spinner("Generating cover letter and opening browser..."):
-            result = _call_apply_api(
-                resume_file, job_url, job_title, job_company
+            """,
+                unsafe_allow_html=True,
             )
-        if result:
-            _render_apply_results(result)
+            return
+
+        st.markdown(f"**{len(analyses)} past analyses**")
+
+        for item in analyses:
+            match_pct = item.get("match_percentage", 0)
+            if match_pct >= 70:
+                score_color = "#22c55e"
+            elif match_pct >= 40:
+                score_color = "#DAA520"
+            else:
+                score_color = "#ef4444"
+
+            created = item.get("created_at", "")[:10]
+            job_url = item.get("job_url", "")
+            url_badge = f"🔗 {job_url[:40]}..." if job_url and len(job_url) > 40 else (f"🔗 {job_url}" if job_url else "📝 Text input")
+
+            st.markdown(
+                f"""
+            <div class="history-card">
+                <div class="history-card-header">
+                    <div>
+                        <div class="history-card-title">{item.get('job_title', 'Unknown Position')}</div>
+                        <div class="history-card-company">{item.get('company', 'Unknown Company')}</div>
+                    </div>
+                    <div class="history-card-score" style="color:{score_color}">{match_pct:.1f}%</div>
+                </div>
+                <div class="history-card-meta">
+                    <span>📅 {created}</span>
+                    <span>{url_badge}</span>
+                </div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+            col_view, col_delete = st.columns([4, 1])
+
+            with col_view:
+                with st.expander(f"View full results — {item.get('job_title', '')}"):
+                    try:
+                        full_result = json.loads(item.get("full_result_json", "{}"))
+                        _render_analysis_results(full_result)
+                    except Exception:
+                        st.error("Could not load saved results.")
+
+            with col_delete:
+                if st.button("🗑️ Delete", key=f"del_analysis_{item['id']}", use_container_width=True):
+                    del_resp = requests.delete(
+                        f"{API_URL}/history/analyses/{item['id']}",
+                        headers=headers,
+                        timeout=10,
+                    )
+                    if del_resp.status_code == 200:
+                        st.toast("Analysis deleted!", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete.")
+
+    except Exception as e:
+        st.error(f"Error loading history: {str(e)}")
+
+
+def _render_recommendation_history():
+    """Fetch and render recommendation history."""
+    headers = {"Authorization": f"Bearer {st.session_state.access_token}"}
+
+    try:
+        resp = requests.get(
+            f"{API_URL}/history/recommendations",
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            st.error("Failed to load recommendation history.")
+            return
+
+        recs = resp.json()
+
+        if not recs:
+            st.markdown(
+                """
+            <div class="empty-state">
+                <div class="empty-state-icon">💼</div>
+                <div class="empty-state-text">No job searches yet</div>
+                <div class="empty-state-hint">Go to the Find Jobs tab to discover matching positions</div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+            return
+
+        st.markdown(f"**{len(recs)} past searches**")
+
+        for item in recs:
+            created = item.get("created_at", "")[:10]
+            total = item.get("total_jobs_found", 0)
+
+            st.markdown(
+                f"""
+            <div class="history-card">
+                <div class="history-card-header">
+                    <div>
+                        <div class="history-card-title">🔍 "{item.get('search_query', 'Unknown')}"</div>
+                        <div class="history-card-meta">
+                            <span>📅 {created}</span>
+                            <span>📊 {total} jobs found</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+            col_view, col_delete = st.columns([4, 1])
+
+            with col_view:
+                with st.expander(f"View results — {item.get('search_query', '')}"):
+                    try:
+                        full_result = json.loads(item.get("full_result_json", "{}"))
+                        _render_recommendations(full_result)
+                    except Exception:
+                        st.error("Could not load saved results.")
+
+            with col_delete:
+                if st.button("🗑️ Delete", key=f"del_rec_{item['id']}", use_container_width=True):
+                    del_resp = requests.delete(
+                        f"{API_URL}/history/recommendations/{item['id']}",
+                        headers=headers,
+                        timeout=10,
+                    )
+                    if del_resp.status_code == 200:
+                        st.toast("Search deleted!", icon="✅")
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete.")
+
+    except Exception as e:
+        st.error(f"Error loading history: {str(e)}")
+
 
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
@@ -401,6 +570,23 @@ def _auth_headers() -> dict:
     """Returns the Authorization header using the token stored in session state."""
     token = st.session_state.get("access_token", "")
     return {"Authorization": f"Bearer {token}"}
+
+
+def _resend_verification_email():
+    """Calls POST /auth/resend-verification and shows feedback."""
+    try:
+        resp = requests.post(
+            f"{API_URL}/auth/resend-verification",
+            headers=_auth_headers(),
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            st.toast("📧 Verification email sent! Check your inbox.", icon="✅")
+        else:
+            detail = resp.json().get("detail", "Could not resend email.")
+            st.toast(f"❌ {detail}", icon="🚫")
+    except Exception as e:
+        st.toast(f"❌ Error: {e}", icon="🚫")
 
 
 def _handle_401():
@@ -474,35 +660,6 @@ def _call_recommend_api(resume_file, location, employment_type, remote_only):
         st.error(f"Something went wrong: {str(e)}")
         return None
 
-
-def _call_apply_api(resume_file, job_url, job_title, job_company):
-    try:
-        files = {"file": (resume_file.name, resume_file, resume_file.type)}
-        data = {
-            "job_url": job_url,
-            "job_title": job_title,
-            "job_company": job_company,
-        }
-        response = requests.post(
-            f"{API_URL}/apply",
-            files=files,
-            data=data,
-            headers=_auth_headers(),
-            timeout=360,
-        )
-        if response.status_code == 200:
-            return response.json()
-        if response.status_code == 401:
-            _handle_401()
-            return None
-        st.error(f"Error: {response.json().get('detail', 'Unknown error')}")
-        return None
-    except requests.exceptions.ConnectionError:
-        st.error("Cannot connect to the backend. Make sure the server is running.")
-        return None
-    except Exception as e:
-        st.error(f"Something went wrong: {str(e)}")
-        return None
 
 
 def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
@@ -694,7 +851,7 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
 # ─── Results ──────────────────────────────────────────────────────────────────
 
 def _render_analysis_results(result: dict):
-    analysis = result.get("analysis", {})
+    analysis = result.get("analysis") or {}
     match_percentage = analysis.get("match_percentage", 0)
     match_label = result.get("match_label", "")
     match_color = result.get("match_color", "gray")
@@ -706,14 +863,26 @@ def _render_analysis_results(result: dict):
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns(3)
+    # Semantic similarity from RAG embeddings
+    semantic_score = analysis.get("semantic_similarity", 0)
+
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         matched = len(analysis.get("matched_skills", []))
         total = matched + len(analysis.get("missing_skills", []))
-        st.metric("Match Score", f"{match_percentage}%", match_label)
+        st.metric("Final Score", f"{match_percentage}%", match_label)
     with col2:
-        st.metric("Skills Matched", f"{matched}/{total}")
+        # Semantic similarity: color indicator based on score
+        if semantic_score >= 70:
+            sem_delta = "Strong Overlap"
+        elif semantic_score >= 50:
+            sem_delta = "Moderate Overlap"
+        else:
+            sem_delta = "Low Overlap"
+        st.metric("Semantic Similarity", f"{semantic_score:.1f}%", sem_delta, help="Computed by embedding both your resume and the job description using OpenAI text-embedding-3-small and measuring their cosine similarity. Catches synonym/concept matches GPT might miss.")
     with col3:
+        st.metric("Skills Matched", f"{matched}/{total}")
+    with col4:
         exp_fit = analysis.get("experience_fit", "unknown")
         st.metric("Experience Fit", exp_fit.title())
 
@@ -736,38 +905,18 @@ def _render_analysis_results(result: dict):
     render_resume_tips(analysis.get("resume_tips", []))
     st.markdown("<br><br>", unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        job  = result.get("job", {})
-        if st.button("Apply for this job →", use_container_width=True, type="primary"):
-            st.session_state.prefill_job = {
-                "url":     st.session_state.get("analyze_url", "") or "",
-                "title":   job.get("title", ""),
-                "company": job.get("company", ""),
-            }
-            # Inject JS to click the Apply tab (3rd tab)
-            st.markdown("""
-            <script>
-            (function() {
-                const tabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
-                if (tabs.length >= 3) { tabs[2].click(); }
-            })();
-            </script>
-            """, unsafe_allow_html=True)
-            st.rerun()
-    with col2:
-        pdf_bytes = _generate_pdf_report(
-            result,
-            job_url=st.session_state.get("analyze_url")
-        )
-        job_title_slug = result.get("job", {}).get("title", "report").replace(" ", "_")[:30]
-        st.download_button(
-            "⇓ Download PDF Report",
-            data=pdf_bytes,
-            file_name=f"analysis_{job_title_slug}.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
+    pdf_bytes = _generate_pdf_report(
+        result,
+        job_url=st.session_state.get("analyze_url")
+    )
+    job_title_slug = result.get("job", {}).get("title", "report").replace(" ", "_")[:30]
+    st.download_button(
+        "⇓ Download PDF Report",
+        data=pdf_bytes,
+        file_name=f"analysis_{job_title_slug}.pdf",
+        mime="application/pdf",
+        use_container_width=True,
+    )
 
 
 def _render_recommendations(result: dict):
@@ -811,80 +960,100 @@ def _render_recommendations(result: dict):
                     st.markdown(f"- {name}")
             st.markdown(f"**Summary:** {rec.get('summary', '')}")
             if job.get("url"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.link_button(
-                        "View job posting →",
-                        url=job.get("url", ""),
-                        use_container_width=True,
-                    )
-                with col2:
-                    if st.button(
-                        "Pre-fill application →",
-                        key=f"apply_{rec.get('rank', 0)}",
-                        use_container_width=True,
-                        type="primary",
-                    ):
-                        # Store job details so Apply tab can read them
-                        st.session_state.prefill_job = {
-                            "url":     job.get("url", ""),
-                            "title":   job.get("title", ""),
-                            "company": job.get("company", ""),
-                        }
-                        # Inject JS to programmatically click the Apply tab (3rd tab)
-                        st.markdown("""
-                        <script>
-                        (function() {
-                            const tabs = window.parent.document.querySelectorAll(
-                                'button[data-baseweb="tab"]'
-                            );
-                            if (tabs.length >= 3) { tabs[2].click(); }
-                        })();
-                        </script>
-                        """, unsafe_allow_html=True)
-                        st.rerun()
+                st.link_button(
+                    "View job posting →",
+                    url=job.get("url", ""),
+                    use_container_width=True,
+                )
 
 
-def _render_apply_results(result: dict):
-    fields_filled = result.get("fields_filled", [])
-    fields_failed = result.get("fields_failed", [])
 
+# ─── Profile ──────────────────────────────────────────────────────────────────
+
+def render_profile_page():
+    """Tab 4: View and edit user profile."""
+    st.markdown("## 👤 Your Profile")
+
+    headers = {"Authorization": f"Bearer {st.session_state.access_token}"}
+
+    # Fetch current profile
+    try:
+        resp = requests.get(
+            f"{API_URL}/auth/me",
+            headers=headers,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            st.error("Failed to load profile.")
+            return
+
+        profile = resp.json()
+    except Exception as e:
+        st.error(f"Error loading profile: {str(e)}")
+        return
+
+    st.markdown(
+        '<div class="profile-section"><div class="profile-header">Edit Profile</div></div>',
+        unsafe_allow_html=True,
+    )
+
+    with st.form("profile_form"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            name = st.text_input("Full Name", value=profile.get("name", ""))
+            phone = st.text_input("Phone", value=profile.get("phone", ""))
+            email_display = profile.get("email", "")
+            st.text_input("Email", value=email_display, disabled=True, help="Email cannot be changed")
+
+        with col2:
+            linkedin = st.text_input("LinkedIn URL", value=profile.get("linkedin_url", ""), placeholder="https://linkedin.com/in/...")
+            github = st.text_input("GitHub URL", value=profile.get("github_url", ""), placeholder="https://github.com/...")
+            portfolio = st.text_input("Portfolio URL", value=profile.get("portfolio_url", ""), placeholder="https://...")
+
+        submitted = st.form_submit_button("💾 Save Changes", use_container_width=True, type="primary")
+
+        if submitted:
+            update_data = {
+                "name": name,
+                "phone": phone,
+                "linkedin_url": linkedin,
+                "github_url": github,
+                "portfolio_url": portfolio,
+            }
+
+            try:
+                update_resp = requests.put(
+                    f"{API_URL}/auth/profile",
+                    json=update_data,
+                    headers=headers,
+                    timeout=10,
+                )
+                if update_resp.status_code == 200:
+                    # Update session state with new name
+                    st.session_state.user_name = name
+                    st.toast("Profile updated successfully!", icon="✅")
+                    st.rerun()
+                else:
+                    detail = "Unknown error"
+                    try:
+                        detail = update_resp.json().get("detail", update_resp.text)
+                    except Exception:
+                        detail = update_resp.text
+                    st.error(f"Failed to update profile: {detail}")
+            except Exception as e:
+                st.error(f"Error updating profile: {str(e)}")
+
+    # Account info
     st.markdown("---")
-    st.markdown("""<h2 class="grad-text" style="font-size: 28px; font-weight: 700; letter-spacing: -0.5px; margin: 0 0 8px 0; font-family:'Playfair Display',serif;">Application pre-filled</h2>""", unsafe_allow_html=True)
-
-    st.success(f"✓ {result.get('message', 'Form pre-filled successfully.')}")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Fields filled automatically**")
-        for field in fields_filled:
-            st.markdown(f"✓ {field.replace('_', ' ').title()}")
-        if not fields_filled:
-            st.info("No fields were auto-filled.")
-    with col2:
-        st.markdown("**Fields that need your attention**")
-        for field in fields_failed:
-            st.markdown(f"⚠ {field.replace('_', ' ').title()}")
-        if not fields_failed:
-            st.success("All fields filled!")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    cover_letter = result.get("application_data", {}).get("cover_letter", "")
-    if cover_letter:
-        with st.expander("View generated cover letter"):
-            st.markdown(f"""
-            <div style="background: rgba(18,16,10,0.82); backdrop-filter: blur(14px); border: 1px solid rgba(201,168,76,0.12); border-radius: 12px; padding: 24px; color: #c8bfaa; line-height: 1.9; font-size: 15px; white-space: pre-wrap; font-family:'DM Sans',sans-serif;">{cover_letter}</div>
-            """, unsafe_allow_html=True)
-            st.download_button(
-                "Download cover letter",
-                data=cover_letter,
-                file_name="cover_letter.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
+    st.markdown("### 📋 Account Information")
+    info_col1, info_col2 = st.columns(2)
+    with info_col1:
+        st.markdown(f"**User ID:** {profile.get('id', 'N/A')}")
+        st.markdown(f"**Email:** {profile.get('email', 'N/A')}")
+    with info_col2:
+        st.markdown(f"**Name:** {profile.get('name', 'N/A')}")
+        st.markdown(f"**Phone:** {profile.get('phone', 'N/A') or 'Not set'}")
 
 
 if __name__ == "__main__":

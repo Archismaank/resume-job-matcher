@@ -1,40 +1,70 @@
+# app/agents/scorer.py
+
+from app.rag.similarity import blend_scores
+
+
 def calculate_match_percentage(
-    required_skills_score : float,
-    preferred_skills_score : float,
-    experience_score : float,
-    education_score : float,
-    projects_score : float
+    required_skills_score: float,
+    preferred_skills_score: float,
+    experience_score: float,
+    education_score: float,
+    projects_score: float,
+    semantic_score: float | None = None,
 ) -> float:
     """
-    Calculates the final match percentage using a weighted formula.
+    Calculates the final match percentage.
 
+    Step 1 — AI Weighted Score (from GPT sub-scores):
     Weights:
     - Required Skills : 40% (most important)
-    - Experience : 25% (second most important)
-    - Education : 15% (important but flexible)
-    - Preferred Skills : 12 % (nice to have)
-    - Projects : 8% (bonus for practical experience)
+    - Experience      : 25% (second most important)
+    - Education       : 15% (important but flexible)
+    - Preferred Skills: 12% (nice to have)
+    - Projects        :  8% (bonus for practical experience)
+    Total             = 100%
 
-    Total = 100%
+    Step 2 — Blend with Semantic Score (if provided):
+    If a semantic_score from cosine similarity is available:
+        final = (semantic_score × 35%) + (ai_score × 65%)
+
+    Why blend?
+    - AI score is good at structured criteria (experience years, education level)
+    - Semantic score catches synonym/concept overlap GPT may miss
+      (e.g. "PyTorch" vs "deep learning frameworks")
+    - The AI score dominates (65%) because it understands nuance
+      (overqualified, education mismatch, etc.)
+
+    Args:
+        required_skills_score:  GPT-judged score 0-100
+        preferred_skills_score: GPT-judged score 0-100
+        experience_score:       GPT-judged score 0-100
+        education_score:        GPT-judged score 0-100
+        projects_score:         GPT-judged score 0-100
+        semantic_score:         Cosine similarity score 0-100 (optional)
+
+    Returns:
+        Final match percentage (0-100), rounded to 1 decimal place.
     """
-    # each score comes in as 0-100 from OpenAI
-    # we multiply by the weight and divide by 100 to get the weighted contribution.
+    # Step 1: Compute the AI-weighted score
+    ai_score = (
+        required_skills_score  * 0.40
+        + experience_score     * 0.25
+        + education_score      * 0.15
+        + preferred_skills_score * 0.12
+        + projects_score       * 0.08
+    )
+    ai_score = round(ai_score, 1)
 
-    required_contribution = required_skills_score * 0.40
-    experience_contribution = experience_score * 0.25
-    education_contribution = education_score * 0.15
-    preferred_contribution = preferred_skills_score * 0.12
-    projects_contribution = projects_score * 0.08
+    # Step 2: Blend with semantic score if available
+    if semantic_score is not None:
+        return blend_scores(semantic_score=semantic_score, ai_score=ai_score)
 
-    # now adding all the contribution
-    total = (required_contribution + experience_contribution + education_contribution + preferred_contribution + projects_contribution)
+    return ai_score
 
-    # rounding it to one decimal place
-    return round(total, 1)
 
-def get_match_label(match_percentage : float) -> str:
+def get_match_label(match_percentage: float) -> str:
     """
-    Converts a match percentage into a human redable label.
+    Converts a match percentage into a human-readable label.
     """
     if match_percentage >= 85:
         return "Excellent Match"
@@ -46,11 +76,12 @@ def get_match_label(match_percentage : float) -> str:
         return "Weak Match"
     else:
         return "Poor Match"
-    
-def get_match_color(match_percentage : float) -> str:
+
+
+def get_match_color(match_percentage: float) -> str:
     """
-    Return a color for the match percentage.
-    Used later in Streamlit UI.
+    Returns a color string for the match percentage.
+    Used in the Streamlit UI.
     green = good, orange = moderate, red = poor
     """
     if match_percentage >= 70:
@@ -59,4 +90,3 @@ def get_match_color(match_percentage : float) -> str:
         return "orange"
     else:
         return "red"
-
