@@ -6,6 +6,7 @@ import json
 import io
 from datetime import datetime
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos
 from streamlit_extras.metric_cards import style_metric_cards
 from ui.components import (
     set_page_config,
@@ -662,6 +663,45 @@ def _call_recommend_api(resume_file, location, employment_type, remote_only):
 
 
 
+def _clean_pdf_text(text: any) -> str:
+    """Sanitizes text for FPDF Helvetica font (Latin-1 compatible)."""
+    if text is None:
+        return ""
+    text = str(text)
+    replacements = {
+        "\u2018": "'",   # Left single quotation mark ‘
+        "\u2019": "'",   # Right single quotation mark ’
+        "\u201a": "'",   # Single low-9 quotation mark ‚
+        "\u201b": "'",   # Single high-reversed-9 quotation mark ‛
+        "\u201c": '"',   # Left double quotation mark “
+        "\u201d": '"',   # Right double quotation mark ”
+        "\u201e": '"',   # Double low-9 quotation mark „
+        "\u201f": '"',   # Double high-reversed-9 quotation mark ‟
+        "\u2013": "-",   # En dash –
+        "\u2014": "-",   # Em dash —
+        "\u2015": "-",   # Horizontal bar ―
+        "\u2022": "-",   # Bullet •
+        "\u2023": ">",   # Triangular bullet ‣
+        "\u2026": "...", # Horizontal ellipsis …
+        "\u00a0": " ",   # Non-breaking space
+        "\u200b": "",    # Zero width space
+        "\u202f": " ",   # Narrow no-break space
+        "\u20ac": "EUR", # Euro sign €
+        "\u20b9": "INR", # Indian Rupee ₹
+        "\u00b7": "-",   # Middle dot ·
+        "\u2192": "->",  # Rightwards arrow →
+        "\u2190": "<-",  # Leftwards arrow ←
+        "\u2713": "v",   # Check mark ✓
+        "\u2714": "v",   # Heavy check mark ✔
+        "\u2717": "x",   # Ballot X ✗
+        "\u2718": "x",   # Heavy ballot X ✘
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    # Ensure all remaining characters can be safely encoded into latin-1
+    return text.encode("latin-1", "replace").decode("latin-1")
+
+
 def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
     """Generates a styled PDF analysis report and returns it as bytes."""
     job      = result.get("job", {}) or {}
@@ -693,15 +733,15 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
     pdf.set_font("Helvetica", "B", 22)
     pdf.set_text_color(*C_GOLD)
     pdf.set_y(11)
-    pdf.cell(0, 11, "Resume Job Matcher", ln=True, align="C")
+    pdf.cell(0, 11, "Resume Job Matcher", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
 
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(*C_LIGHT)
-    pdf.cell(0, 6, "AI-Powered Career Analysis Report", ln=True, align="C")
+    pdf.cell(0, 6, "AI-Powered Career Analysis Report", new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
 
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*C_GRAY)
-    pdf.cell(0, 5, f"Generated: {generated}", ln=True, align="C")
+    pdf.cell(0, 5, _clean_pdf_text(f"Generated: {generated}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="C")
     pdf.ln(16)
 
     # ── Helper lambdas ────────────────────────────────────────────────────────
@@ -709,7 +749,7 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
         pdf.set_font("Helvetica", "B", 10)
         pdf.set_text_color(*C_GOLD)
         pdf.set_fill_color(30, 26, 16)
-        pdf.cell(0, 8, f"  {text}", ln=True, fill=True)
+        pdf.cell(0, 8, f"  {_clean_pdf_text(text)}", new_x=XPos.LMARGIN, new_y=YPos.NEXT, fill=True)
         pdf.ln(2)
         pdf.set_text_color(40, 36, 24)
 
@@ -717,7 +757,7 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(50, 45, 35)
         pdf.set_x(18 + indent)
-        pdf.multi_cell(0, 5, text)
+        pdf.multi_cell(0, 5, _clean_pdf_text(text))
 
     def kv(key, value, indent=0):
         if not value:
@@ -725,10 +765,10 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
         pdf.set_font("Helvetica", "B", 9)
         pdf.set_text_color(*C_GRAY)
         pdf.set_x(18 + indent)
-        pdf.cell(38, 5, key + ":", ln=False)
+        pdf.cell(38, 5, _clean_pdf_text(key) + ":", new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(50, 45, 35)
-        pdf.multi_cell(0, 5, str(value))
+        pdf.multi_cell(0, 5, _clean_pdf_text(value))
 
     # ── Job Details ───────────────────────────────────────────────────────────
     section_title("JOB DETAILS")
@@ -740,20 +780,20 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
         pdf.set_font("Helvetica", "B", 9)
         pdf.set_text_color(*C_GRAY)
         pdf.set_x(18)
-        pdf.cell(38, 5, "Source URL:", ln=False)
+        pdf.cell(38, 5, "Source URL:", new_x=XPos.RIGHT, new_y=YPos.TOP)
         pdf.set_font("Helvetica", "U", 8)
         pdf.set_text_color(*C_BLUE)
-        pdf.multi_cell(0, 5, job_url)
+        pdf.multi_cell(0, 5, _clean_pdf_text(job_url))
     pdf.ln(4)
 
     # ── Match Score ───────────────────────────────────────────────────────────
     section_title("MATCH SCORE")
     pdf.set_font("Helvetica", "B", 28)
     pdf.set_text_color(*C_GOLD)
-    pdf.cell(0, 14, f"{match_pct}%", ln=False, align="L")
+    pdf.cell(0, 14, f"{match_pct}%", new_x=XPos.RIGHT, new_y=YPos.TOP, align="L")
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(*C_GRAY)
-    pdf.cell(0, 14, match_label, ln=True, align="R")
+    pdf.cell(0, 14, _clean_pdf_text(match_label), new_x=XPos.LMARGIN, new_y=YPos.NEXT, align="R")
 
     # Progress bar
     bar_x, bar_y, bar_w, bar_h = 18, pdf.get_y() + 1, 174, 5
@@ -792,7 +832,7 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
         skills_line = "  |  ".join(matched)
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(*C_GREEN)
-        pdf.multi_cell(0, 5, skills_line)
+        pdf.multi_cell(0, 5, _clean_pdf_text(skills_line))
         pdf.ln(4)
 
     # ── Missing Skills ────────────────────────────────────────────────────────
@@ -809,12 +849,12 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
             pdf.set_text_color(*C_RED)
             pdf.set_x(22)
             tag = f"[{importance}]" if importance else ""
-            pdf.cell(0, 5, f"- {skill}  {tag}", ln=True)
+            pdf.cell(0, 5, _clean_pdf_text(f"- {skill}  {tag}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             if reason:
                 pdf.set_font("Helvetica", "I", 8)
                 pdf.set_text_color(*C_GRAY)
                 pdf.set_x(28)
-                pdf.multi_cell(0, 4, reason)
+                pdf.multi_cell(0, 4, _clean_pdf_text(reason))
         pdf.ln(4)
 
     # ── Bonus Skills ──────────────────────────────────────────────────────────
@@ -823,7 +863,7 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
         section_title(f"BONUS SKILLS  ({len(bonus)})")
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(*C_BLUE)
-        pdf.multi_cell(0, 5, "  |  ".join(bonus))
+        pdf.multi_cell(0, 5, _clean_pdf_text("  |  ".join(bonus)))
         pdf.ln(4)
 
     # ── Resume Tips ───────────────────────────────────────────────────────────
@@ -834,10 +874,10 @@ def _generate_pdf_report(result: dict, job_url: str = None) -> bytes:
             pdf.set_font("Helvetica", "B", 9)
             pdf.set_text_color(*C_GRAY)
             pdf.set_x(22)
-            pdf.cell(6, 5, f"{i}.", ln=False)
+            pdf.cell(6, 5, f"{i}.", new_x=XPos.RIGHT, new_y=YPos.TOP)
             pdf.set_font("Helvetica", "", 9)
             pdf.set_text_color(50, 45, 35)
-            pdf.multi_cell(0, 5, str(tip))
+            pdf.multi_cell(0, 5, _clean_pdf_text(tip))
         pdf.ln(2)
 
     # ── Footer line ───────────────────────────────────────────────────────────
@@ -905,18 +945,21 @@ def _render_analysis_results(result: dict):
     render_resume_tips(analysis.get("resume_tips", []))
     st.markdown("<br><br>", unsafe_allow_html=True)
 
-    pdf_bytes = _generate_pdf_report(
-        result,
-        job_url=st.session_state.get("analyze_url")
-    )
-    job_title_slug = result.get("job", {}).get("title", "report").replace(" ", "_")[:30]
-    st.download_button(
-        "⇓ Download PDF Report",
-        data=pdf_bytes,
-        file_name=f"analysis_{job_title_slug}.pdf",
-        mime="application/pdf",
-        use_container_width=True,
-    )
+    try:
+        pdf_bytes = _generate_pdf_report(
+            result,
+            job_url=st.session_state.get("analyze_url")
+        )
+        job_title_slug = result.get("job", {}).get("title", "report").replace(" ", "_")[:30]
+        st.download_button(
+            "⇓ Download PDF Report",
+            data=pdf_bytes,
+            file_name=f"analysis_{job_title_slug}.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    except Exception as e:
+        st.warning(f"Could not generate PDF report download: {e}")
 
 
 def _render_recommendations(result: dict):
